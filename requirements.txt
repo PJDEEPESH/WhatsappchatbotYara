@@ -1,0 +1,7 @@
+Flask
+gunicorn
+requests
+openai
+python-dotenv
+psycopg2-binary  # Use the binary version for cloud stability
+twilio
