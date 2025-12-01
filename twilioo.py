@@ -447,7 +447,6 @@
 #     print("\n⚠️ ACTION REQUIRED: Set your Twilio Webhook URL to point to /webhook.")
 #     print("   - Use Ngrok: Run 'ngrok http 5000' and paste the HTTPS URL into the Twilio Console.\n")
 #     app.run(port=5000)
-
 import os
 import logging
 import psycopg2
@@ -585,22 +584,34 @@ def get_user(conn, phone):
         return cur.fetchone()
 
 def create_user(conn, phone):
-    with conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO public.users (phone, conversation_step) VALUES (%s, 'welcome') "
-            "ON CONFLICT (phone) DO NOTHING",
-            (phone,)
-        )
-        conn.commit()
-        cur.execute("SELECT * FROM public.users WHERE phone = %s", (phone,))
-        return cur.fetchone()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO public.users (phone, conversation_step) VALUES (%s, 'awaiting_name_age') "
+                "ON CONFLICT (phone) DO UPDATE SET conversation_step = 'awaiting_name_age'",
+                (phone,)
+            )
+            conn.commit()
+            logger.info(f"✅ Created user {phone}")
+            cur.execute("SELECT * FROM public.users WHERE phone = %s", (phone,))
+            return cur.fetchone()
+    except Exception as e:
+        logger.error(f"❌ Create user error: {e}")
+        conn.rollback()
+        raise
 
 def update_user(conn, phone, data):
     set_clause = ", ".join([f"{key} = %s" for key in data.keys()])
     values = list(data.values()) + [phone]
-    with conn.cursor() as cur:
-        cur.execute(f"UPDATE public.users SET {set_clause} WHERE phone = %s", values)
-        conn.commit()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE public.users SET {set_clause} WHERE phone = %s", values)
+            conn.commit()
+            logger.info(f"✅ Updated user {phone}: {data}")
+    except Exception as e:
+        logger.error(f"❌ Update user error: {e}")
+        conn.rollback()
+        raise
 
 def build_search_query_smart(table, ai_data):
     """Build smart search query with proper filtering"""
@@ -800,22 +811,39 @@ def process_message_thread(sender, text):
         conn = postgreSQL_pool.getconn()
         user = get_user(conn, sender)
 
-        # New user - ask what they're looking for
+        # New user - ask for name and age immediately
         if not user:
             create_user(conn, sender)
             send_whatsapp_message(
                 sender,
                 "Hey! 🇦🇷 Welcome to Buenos Aires.\n"
                 "I'm Yara, your local guide to events, bars, restaurants, and hidden gems.\n\n"
-                "What are you looking for today?"
+                "What's your name and age?"
             )
-            update_user(conn, sender, {"conversation_step": "ask_name_age"})
             return
 
         step = user.get('conversation_step', 'ready')
         user_age = user.get('age', '25')
         user_name = user.get('name')
 
+        logger.info(f"User state: step={step}, name={user_name}, age={user_age}")
+
+        # ONBOARDING: Waiting for name/age
+        if step == 'awaiting_name_age' and not user_name:
+            # Extract name and age from text
+            parts = text.split()
+            name = parts[0] if parts else "Friend"
+            age = "".join(filter(str.isdigit, text)) or "25"
+            
+            logger.info(f"Extracted name={name}, age={age}")
+            
+            # Update user with name, age, and mark as ready
+            update_user(conn, sender, {"name": name, "age": age, "conversation_step": "ready"})
+            
+            # Confirm and ask what they want
+            send_whatsapp_message(sender, f"Thanks {name}! What are you looking for today?")
+            return
+        
         # Analyze intent
         ai_data = analyze_user_intent(text)
         if not ai_data:
@@ -826,30 +854,6 @@ def process_message_thread(sender, text):
             greeting = f"Hey {user_name}! What are you looking for today?"
             send_whatsapp_message(sender, greeting)
             return
-        
-        # Ask for name/age if not provided yet
-        if step == 'ask_name_age' and not user_name:
-            # User just said what they want, now ask name/age
-            send_whatsapp_message(sender, "To give you the best recommendations, what's your name and age?")
-            update_user(conn, sender, {"conversation_step": "awaiting_name_age", "temp_query": text})
-            return
-        
-        # Receive name/age
-        if step == 'awaiting_name_age':
-            parts = text.split()
-            name = parts[0] if parts else "Friend"
-            age = "".join(filter(str.isdigit, text)) or "25"
-            update_user(conn, sender, {"name": name, "age": age, "conversation_step": "ready"})
-            
-            # Get their original query
-            temp_query = user.get('temp_query', '')
-            if temp_query:
-                send_whatsapp_message(sender, f"Thanks {name}! Looking for the best options now...")
-                text = temp_query
-                ai_data = analyze_user_intent(text)
-            else:
-                send_whatsapp_message(sender, f"Thanks {name}! What are you looking for?")
-                return
         
         # Search database
         found_something = False
