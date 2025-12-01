@@ -19,7 +19,7 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# --- CONFIGURATION (TWILIO ADDITIONS) ---
+# --- CONFIGURATION ---
 DB_URI = os.getenv("DATABASE_URL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
@@ -44,16 +44,15 @@ try:
     postgreSQL_pool = psycopg2.pool.SimpleConnectionPool(
         1, 50, DB_URI, cursor_factory=RealDictCursor, connect_timeout=10
     )
-    print("✅ Database Connection Pool Created (Supports concurrent users)")
+    print("✅ Database Connection Pool Created")
 except (Exception, psycopg2.DatabaseError) as error:
     print("❌ Error connecting to PostgreSQL", error)
 
 # ==============================================================================
-# 🧠 AI & UTILS (CRASH FIXES IMPLEMENTED)
+# 🧠 AI & UTILS
 # ==============================================================================
 
 def analyze_user_intent(user_text):
-    # ... (Logic remains mostly the same, strict JSON required)
     today_str = date.today().strftime("%Y-%m-%d")
     weekday_str = date.today().strftime("%A")
     
@@ -81,7 +80,6 @@ def analyze_user_intent(user_text):
 
 def generate_just_for_you(user_age, item_name, item_desc, item_mood):
     try:
-        # ... (Same logic)
         prompt = (
             f"Write a 1-sentence recommendation for a {user_age} year old. "
             f"Venue: {item_name}. Vibe: {item_mood}. "
@@ -99,7 +97,6 @@ def generate_just_for_you(user_age, item_name, item_desc, item_mood):
 
 def generate_closing_message(user_query):
     try:
-        # ... (Same logic)
         prompt = (
             f"User query: '{user_query}'. I sent recommendations. "
             "Write a short closing message asking if they are satisfied. Use an emoji."
@@ -115,8 +112,8 @@ def generate_closing_message(user_query):
     except:
         return "Are you satisfied with these options? 🎉"
 
-# --- DATABASE FUNCTIONS (UNTOUCHED) ---
-# ... (All DB functions are identical) ...
+# --- DATABASE FUNCTIONS ---
+
 def get_user(conn, phone):
     with conn.cursor() as cur:
         cur.execute("SELECT * FROM public.users WHERE phone = %s", (phone,))
@@ -124,6 +121,7 @@ def get_user(conn, phone):
 
 def create_user(conn, phone):
     with conn.cursor() as cur:
+        # Defaults to 'welcome' as per your schema
         cur.execute("INSERT INTO public.users (phone, conversation_step) VALUES (%s, 'welcome') ON CONFLICT (phone) DO NOTHING", (phone,))
         conn.commit()
         cur.execute("SELECT * FROM public.users WHERE phone = %s", (phone,))
@@ -229,7 +227,7 @@ def smart_search(conn, table, ai_data):
 
     return []
 
-# --- TWILIO UTILS (REPLACED META LOGIC) ---
+# --- TWILIO UTILS ---
 
 def send_whatsapp_message(to, body, media_url=None):
     if not TWILIO_WHATSAPP_NUMBER: return
@@ -253,18 +251,14 @@ def send_whatsapp_message(to, body, media_url=None):
         print(f"❌ Twilio Send Error: {e}")
 
 # ==============================================================================
-# 📡 FINAL FALLBACK (SMART CONTEXTUAL RESPONSE)
+# 📡 FINAL FALLBACK
 # ==============================================================================
 
 def ask_chatgpt_fallback(user_input, ai_data):
-    """
-    Asks ChatGPT to generate a contextual, helpful suggestion when DB is empty.
-    """
     category = ai_data.get('category')
     mood = ai_data.get('target_mood')
     date_str = ai_data.get('date_range', {}).get('start')
     
-    # Construct a detailed prompt for the AI
     if date_str:
         context = f"The user asked about {date_str}. My database is empty for this date/topic. Suggest something appropriate for a tourist on this date."
     elif category:
@@ -285,8 +279,7 @@ def ask_chatgpt_fallback(user_input, ai_data):
     except: 
         return "I couldn't find specific matches, but I'm looking for general ideas now! Try asking me again in a moment."
 
-
-# --- TIMEOUT LOGIC (UNCHANGED) ---
+# --- TIMEOUT LOGIC ---
 def send_followup_message(user_id):
     try:
         print(f"⏰ Sending follow-up to {user_id}")
@@ -314,7 +307,7 @@ def process_message_thread(sender, text):
         conn = postgreSQL_pool.getconn()
         user = get_user(conn, sender)
 
-        # NEW USER
+        # 1. NEW USER HANDLING
         if not user:
             create_user(conn, sender)
             send_whatsapp_message(sender, "Hey! 🇦🇷 Welcome to Buenos Aires.\nI'm Yara, your local guide to events, bars, restaurants, and hidden gems.\nWhat are you in the mood for today?")
@@ -323,31 +316,40 @@ def process_message_thread(sender, text):
         step = user.get('conversation_step')
         user_age = user.get('age', '25')
 
-        # AI ANALYZE INTENT
+        # 2. AI ANALYZE INTENT
         future_ai = executor.submit(analyze_user_intent, text)
         ai_data = future_ai.result()
         if not ai_data: ai_data = {}
 
-        # GREETING
-        if ai_data.get('is_greeting'):
+        # 3. GREETING CHECK
+        if ai_data.get('is_greeting') and step != 'ask_name_age':
             user_name = user.get('name')
             greeting = f"Hey {user_name}! What are you looking for today?" if user_name else "Hey! What are you looking for today?"
             send_whatsapp_message(sender, greeting)
             return
 
-        # ONBOARDING
-        if step == 'first_mood':
+        # 4. FIX: FIRST MOOD / ONBOARDING LOGIC
+        # If step is 'welcome', the user is replying to the intro message with their first mood.
+        if step == 'welcome':
             send_whatsapp_message(sender, "First, to give you the best personalized recommendations, what’s your name and age?")
+            # Save the text (mood) and update step
             update_user(conn, sender, {"conversation_step": "ask_name_age", "last_mood": text})
             return
 
+        # 5. NAME/AGE CAPTURE
         if step == 'ask_name_age':
-            send_whatsapp_message(sender, f"Ok cool! Showing options for '{user.get('last_mood')}':")
+            last_mood = user.get('last_mood')
+            send_whatsapp_message(sender, f"Ok cool! Showing options for '{last_mood}':")
+            
+            # Simple parsing for name/age
             parts = text.split()
             name = parts[0] if parts else "Friend"
             age = "".join(filter(str.isdigit, text)) or "25"
+            
             update_user(conn, sender, {"name": name, "age": age, "conversation_step": "ready"})
-            text = user.get('last_mood') 
+            
+            # RE-RUN AI on the saved mood so we can search now
+            text = last_mood 
             ai_data = analyze_user_intent(text)
 
         # --- SEARCH LOGIC ---
@@ -365,7 +367,7 @@ def process_message_thread(sender, text):
 
                 for e in events:
                     future_jfy = executor.submit(generate_just_for_you, user_age, e['title'], e['description'], e.get('mood', 'social'))
-                    just_for_you = future_jfy.result() # Parallel AI call
+                    just_for_you = future_jfy.result()
                     
                     display_date = e.get('event_date') if e.get('event_date') else f"Every {e.get('recurring_day')}"
                     caption = (
@@ -378,13 +380,12 @@ def process_message_thread(sender, text):
                         f"📸 {e.get('instagram_link')}\n\n"
                         f"{just_for_you}"
                     )
-                    # TWILIO REQUIRES SEPARATE CALLS FOR MEDIA/TEXT
                     if e.get('image_url'): 
                         send_whatsapp_message(sender, caption, media_url=e.get('image_url'))
                     else: 
                         send_whatsapp_message(sender, caption)
 
-        # B. SEARCH BUSINESSES (Fallback or Explicit Interest)
+        # B. SEARCH BUSINESSES
         if not found_something or ai_data.get('category') in ['bar', 'restaurant', 'cafe', 'shop', 'museum']:
             businesses = smart_search(conn, 'businesses', ai_data)
             
@@ -393,7 +394,7 @@ def process_message_thread(sender, text):
                 send_whatsapp_message(sender, "Found these spots for you:")
                 for b in businesses:
                     future_jfy = executor.submit(generate_just_for_you, user_age, b['name'], b['description'], 'chill')
-                    just_for_you = future_jfy.result() # Parallel AI call
+                    just_for_you = future_jfy.result()
                     
                     msg = (
                         f"*{b.get('name')}*\n"
@@ -409,7 +410,7 @@ def process_message_thread(sender, text):
             closing = generate_closing_message(text)
             send_whatsapp_message(sender, closing)
         else:
-            # D. INTELLIGENT FALLBACK (The Final Solution)
+            # D. INTELLIGENT FALLBACK
             fallback_text = ask_chatgpt_fallback(text, ai_data)
             send_whatsapp_message(sender, fallback_text)
 
@@ -419,7 +420,7 @@ def process_message_thread(sender, text):
         if conn: postgreSQL_pool.putconn(conn)
 
 # ==============================================================================
-# 🌐 TWILIO WEBHOOK (MAIN ENTRY POINT)
+# 🌐 TWILIO WEBHOOK
 # ==============================================================================
 
 @app.route("/webhook", methods=["POST"])
@@ -427,23 +428,14 @@ def twilio_webhook():
     incoming_msg = request.form.get('Body')
     sender_id = request.form.get('From') 
 
-    # --- CRASH FIX IMPLEMENTATION ---
     if not sender_id or not incoming_msg:
-        logger.warning("Received invalid Twilio request (Missing 'From' or 'Body'). Ignoring.")
         return "" 
-    # --- END CRASH FIX ---
     
     resp = MessagingResponse()
-    
-    # 1. Start processing in a background thread to prevent Twilio timeout
     thread = threading.Thread(target=process_message_thread, args=(sender_id, incoming_msg))
     thread.start()
-    
-    # 2. Return empty TwiML response immediately
     return str(resp)
 
 if __name__ == "__main__":
     print("🚀 Twilio Bot is starting...")
-    print("\n⚠️ ACTION REQUIRED: Set your Twilio Webhook URL to point to /webhook.")
-    print("   - Use Ngrok: Run 'ngrok http 5000' and paste the HTTPS URL into the Twilio Console.\n")
     app.run(port=5000)
