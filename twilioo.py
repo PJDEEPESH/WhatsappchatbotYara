@@ -2766,7 +2766,7 @@ def generate_closing_message(user_query, user_language='en'):
         
         response = openai.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "You are Yara, a friendly Buenos Aires guide."}, {"role": "user", "content": prompt}],
+            messages=[{"role": "system", "content": "You are Yara, a friendly Buenos Aires guide.you know evetu thing"}, {"role": "user", "content": prompt}],
             temperature=0.7,
             timeout=4
         )
@@ -2969,7 +2969,7 @@ ORIGINAL REQUEST: "{user_input}"
     try:
         response = openai.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "You are Yara, an expert Buenos Aires local guide."}, {"role": "user", "content": expert_prompt}],
+            messages=[{"role": "system", "content": "You are Yara, an expert Buenos Aires local guide.you know every thing"}, {"role": "user", "content": expert_prompt}],
             temperature=0.8,
             timeout=10
         )
@@ -2994,7 +2994,7 @@ def process_message_thread(sender, text):
 
         if not user:
             create_user(conn, sender)
-            send_whatsapp_message(sender, "Hey! 🇦🇷 Welcome to Buenos Aires.\nI'm Yara, your local guide.\nWhat are you in the mood for today?")
+            send_whatsapp_message(sender, "Hey! Welcome to Yara ai , I’m your Buenos Aires guide for finding the best plans in the city ✨ what are you in the mood for?")
             return
 
         step, user_age = user.get('conversation_step'), user.get('age', '25')
