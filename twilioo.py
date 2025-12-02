@@ -2808,7 +2808,7 @@ def update_user(conn, phone, data):
 
 def build_search_query(table, ai_data, strictness_level):
     """
-    UPDATED: Allow 3-letter words (like 'Bar', 'Pub') to be included in search terms.
+    UPDATED: Now includes 'inferred_keywords' for intelligent searching.
     """
     query = f"SELECT * FROM public.{table} WHERE 1=1"
     args = []
@@ -2823,6 +2823,7 @@ def build_search_query(table, ai_data, strictness_level):
     if ai_data.get('specific_keywords'):
         search_terms.extend(ai_data.get('specific_keywords'))
 
+    # --- THIS IS THE NEW, INTELLIGENT PART ---
     # Add inferred keywords from abstract requests
     if ai_data.get('inferred_keywords'):
         search_terms.extend(ai_data.get('inferred_keywords'))
@@ -2839,12 +2840,11 @@ def build_search_query(table, ai_data, strictness_level):
     
     # Add category if specific
     cat = ai_data.get('category', '')
-    # CHANGE HERE: Changed (> 3) to (>= 3) so "Bar", "Pub", "Gym" are included
-    if cat and len(cat) >= 3 and cat.lower() not in ['event', 'party', 'show', 'place', 'spot']:
+    if cat and len(cat) > 3 and cat.lower() not in ['event', 'party', 'show', 'place', 'spot']:
         search_terms.append(cat)
     
     # Clean and deduplicate
-    search_terms = list(set([t for t in search_terms if t and len(t) >= 3])) # CHANGE: also updated filter here
+    search_terms = list(set([t for t in search_terms if t and len(t) > 2]))
     
     logger.info(f"🔍 Search Terms (Level {strictness_level}): {search_terms}")
 
@@ -2861,7 +2861,6 @@ def build_search_query(table, ai_data, strictness_level):
 
     # --- TEXT SEARCH LOGIC ---
     if search_terms:
-        # For businesses: checks name, description, location, AND TYPE (e.g. Bar, Cafe)
         term_conditions = [f"(title ILIKE %s OR description ILIKE %s OR mood ILIKE %s OR music_type ILIKE %s OR location ILIKE %s)" for _ in search_terms] if table == 'events' else [f"(name ILIKE %s OR description ILIKE %s OR location ILIKE %s OR type ILIKE %s)" for _ in search_terms]
         
         for term in search_terms:
@@ -3003,7 +3002,6 @@ def process_message_thread(sender, text):
         ai_data = executor.submit(analyze_user_intent, text).result() or {"user_language": "en"}
         user_language = ai_data.get('user_language', 'en')
         social_context = ai_data.get('social_context')
-        category = ai_data.get('category', '').lower()
 
         logger.info(f"🌍 Detected Language: {user_language}")
 
@@ -3032,12 +3030,9 @@ def process_message_thread(sender, text):
             ai_data = analyze_user_intent(text) or {"user_language": "en"}
             user_language = ai_data.get('user_language', 'en')
             social_context = ai_data.get('social_context')
-            category = ai_data.get('category', '').lower()
 
         found_something = False
-        
-        # 1. Check Events
-        should_check_events = ai_data.get('date_range') or any(k in category for k in ['event', 'concert', 'show', 'party']) or ai_data.get('inferred_keywords')
+        should_check_events = ai_data.get('date_range') or any(k in ai_data.get('category', '') for k in ['event', 'concert', 'show', 'party']) or ai_data.get('inferred_keywords')
 
         if should_check_events:
             events = smart_search(conn, 'events', ai_data)
@@ -3058,11 +3053,7 @@ def process_message_thread(sender, text):
                     caption = f"*{futures['title'].result()}*\n\n📍 {translate_text(e.get('location'), user_language)}\n🕒 {e.get('event_time')}\n📅 {display_date}\n🎵 {translate_text(e.get('music_type'), user_language)}\n📝 {futures['desc'].result()}\n📸 {e.get('instagram_link')}\n\n{futures['jfy'].result()}"
                     send_whatsapp_message(sender, caption, media_url=e.get('image_url'))
         
-        # 2. Check Businesses (Bars, Cafes, Restaurants)
-        # CHANGE HERE: Added broader check for business types
-        business_keywords = ['bar', 'restaurant', 'cafe', 'club', 'coffee', 'drink', 'food', 'lunch', 'dinner', 'breakfast']
-        should_check_businesses = not found_something or any(k in category for k in business_keywords) or social_context or ai_data.get('target_mood')
-
+        should_check_businesses = not found_something or any(k in ai_data.get('category', '') for k in ['bar', 'restaurant', 'cafe', 'club']) or social_context
         if should_check_businesses:
             businesses = smart_search(conn, 'businesses', ai_data)
             if businesses:
