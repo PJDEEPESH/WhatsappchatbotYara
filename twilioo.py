@@ -2527,6 +2527,583 @@
 
 
 # language detect artistic ecvery oay herr 
+# import os
+# import logging
+# import psycopg2
+# import threading
+# import json
+# import re
+# from concurrent.futures import ThreadPoolExecutor
+# from psycopg2 import pool
+# from psycopg2.extras import RealDictCursor
+# from datetime import datetime, timedelta, date
+# from flask import Flask, request
+# import openai
+# from twilio.rest import Client as TwilioClient 
+# from twilio.twiml.messaging_response import MessagingResponse 
+# from dotenv import load_dotenv
+
+# # 1. Load Environment Variables
+# load_dotenv()
+
+# app = Flask(__name__)
+
+# # --- CONFIGURATION ---
+# DB_URI = os.getenv("DATABASE_URL")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# openai.api_key = OPENAI_API_KEY
+
+# TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+# TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+# TWILIO_WHATSAPP_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER") 
+
+# # Initialize Twilio Client
+# twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+# # Logging
+# logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger(__name__)
+
+# # --- GLOBAL THREAD POOL ---
+# executor = ThreadPoolExecutor(max_workers=5) 
+
+# # --- DATABASE POOL ---
+# try:
+#     postgreSQL_pool = psycopg2.pool.SimpleConnectionPool(
+#         1, 50, DB_URI, cursor_factory=RealDictCursor, connect_timeout=10
+#     )
+#     print("✅ Database Connection Pool Created")
+# except (Exception, psycopg2.DatabaseError) as error:
+#     print("❌ Error connecting to PostgreSQL", error)
+
+# # ==============================================================================
+# # 🧠 ENHANCED AI & UTILS
+# # ==============================================================================
+
+# def analyze_user_intent(user_text):
+#     """
+#     UPDATED: Now includes 'inferred_keywords' for smarter, abstract searches.
+#     """
+#     today_str = date.today().strftime("%Y-%m-%d")
+#     weekday_str = date.today().strftime("%A")
+    
+#     system_prompt = (
+#         f"Current Date: {today_str} ({weekday_str}). "
+#         "You are a multilingual AI that understands ALL languages. "
+#         "Your job is to analyze a user's request for events or businesses in Buenos Aires and extract structured data."
+        
+#         "EXTRACT THE FOLLOWING (return as JSON):\n"
+        
+#         "1. 'is_greeting': boolean (true ONLY for simple greetings with NO other request)\n"
+        
+#         "2. 'date_range': {'start': 'YYYY-MM-DD', 'end': 'YYYY-MM-DD'} or null\n"
+        
+#         "3. 'target_mood': string (romantic, chill, energetic, party, relaxed, upscale, casual)\n"
+        
+#         "4. 'social_context': string (date, friends, solo, family, business)\n"
+        
+#         "5. 'category': string (event, concert, show, bar, restaurant, cafe, etc.)\n"
+        
+#         "6. 'specific_keywords': List of DIRECT and SPECIFIC keywords from the user's text. "
+#         "   - Examples: 'Salsa', 'Techno', 'Jazz', 'Rooftop', 'Live music'.\n"
+        
+#         "7. 'user_language': detected ISO 639-1 language code (en, es, te, he, ar, etc.). Default to 'en' if uncertain.\n"
+
+#         # --- THIS IS THE NEW, INTELLIGENT PART ---
+#         "8. 'inferred_keywords': List of related, searchable keywords if the user's request is abstract. "
+#         "   - If the user asks for 'artistic' or 'cultural' things, infer related concrete terms.\n"
+#         "   - If the user's request is already specific (e.g., 'techno'), this can be null.\n"
+#         "   - Examples:\n"
+#         "     * User says 'artistic events' → inferred_keywords: ['art', 'gallery', 'exhibition', 'museum', 'theatre', 'performance', 'cultural']\n"
+#         "     * User says 'something intellectual' → inferred_keywords: ['lecture', 'talk', 'book', 'museum', 'cinema', 'art']\n"
+#         "     * User says 'a place with a nice view' → inferred_keywords: ['rooftop', 'terrace', 'view', 'balcony']\n"
+        
+#         "EXAMPLES:\n"
+#         "User: 'I want a chill bar with friends'\n"
+#         "→ {social_context: 'friends', target_mood: 'chill', category: 'bar', user_language: 'en'}\n"
+        
+#         "User: 'artistic events this weekend'\n"
+#         "→ {category: 'event', date_range: {...}, user_language: 'en', inferred_keywords: ['art', 'gallery', 'exhibition', 'museum', 'theatre', 'performance', 'cultural']}\n"
+        
+#         "User: 'Techno party tonight'\n"
+#         "→ {category: 'party', date_range: {...}, specific_keywords: ['Techno', 'Electronic'], user_language: 'en'}\n"
+        
+#         "Return STRICT JSON only."
+#     )
+    
+#     try:
+#         response = openai.chat.completions.create(
+#             model="gpt-4o-mini",
+#             response_format={"type": "json_object"},
+#             messages=[
+#                 {"role": "system", "content": system_prompt}, 
+#                 {"role": "user", "content": user_text}
+#             ],
+#             temperature=0
+#         )
+#         content = response.choices[0].message.content.strip()
+#         data = json.loads(content)
+        
+#         if not isinstance(data, dict): 
+#             return {"user_language": "en"}
+        
+#         if not data.get('user_language') or data.get('user_language') == 'unknown':
+#             data['user_language'] = 'en'
+        
+#         logger.info(f"🧠 AI Analysis: {data}")
+#         return data
+        
+#     except Exception as e:
+#         logger.error(f"AI Intent Error: {e}")
+#         return {"user_language": "en"}
+
+# # (The other functions like generate_just_for_you, translate_text, etc., are UNCHANGED)
+# def generate_just_for_you(user_age, item_name, item_desc, item_mood, social_context=None, user_language='en'):
+#     """
+#     Enhanced: Now generates personalized recommendations in user's detected language
+#     """
+#     try:
+#         context_msg = ""
+#         if social_context == 'date':
+#             context_msg = "Perfect for a romantic date night."
+#         elif social_context == 'friends':
+#             context_msg = "Great spot to hang out with friends."
+#         elif social_context == 'solo':
+#             context_msg = "Perfect for solo exploration."
+#         elif social_context == 'business':
+#             context_msg = "Ideal for business meetings."
+        
+#         # Language instruction
+#         lang_instruction = f"Respond in the language code: {user_language}. "
+#         if user_language == 'te':
+#             lang_instruction += "Use Telugu script and language."
+#         elif user_language == 'he':
+#             lang_instruction += "Use Hebrew script and language."
+#         elif user_language == 'ar':
+#             lang_instruction += "Use Arabic script and language."
+#         elif user_language == 'hi':
+#             lang_instruction += "Use Hindi script and language."
+#         elif user_language == 'es':
+#             lang_instruction += "Use Spanish language."
+#         elif user_language == 'pt':
+#             lang_instruction += "Use Portuguese language."
+#         elif user_language == 'fr':
+#             lang_instruction += "Use French language."
+#         else:
+#             lang_instruction += "Use English language."
+        
+#         prompt = (
+#             f"{lang_instruction} "
+#             f"Write a 1-sentence recommendation for a {user_age} year old. "
+#             f"Venue: {item_name}. Vibe: {item_mood}. {context_msg} "
+#             "Start with '✨ Just for you:' or equivalent in the target language. Be enthusiastic and specific."
+#         )
+        
+#         response = openai.chat.completions.create(
+#             model="gpt-4o-mini",
+#             messages=[{"role": "user", "content": prompt}],
+#             temperature=0.7,
+#             timeout=5
+#         )
+#         return response.choices[0].message.content.replace('"', '')
+#     except Exception as e:
+#         logger.error(f"Just for you error: {e}")
+#         # Fallback based on language
+#         if user_language == 'te':
+#             return f"✨ మీ కోసం: ఇది {item_mood} వైబ్‌తో సరిపోతుంది! {context_msg}"
+#         elif user_language == 'he':
+#             return f"✨ בשבילך: זה מתאים ל{item_mood} אווירה! {context_msg}"
+#         elif user_language == 'ar':
+#             return f"✨ لك خصيصاً: هذا يناسب الأجواء {item_mood}! {context_msg}"
+#         elif user_language == 'es':
+#             return f"✨ Just for you: ¡Esto coincide con el ambiente {item_mood}! {context_msg}"
+#         else:
+#             return f"✨ Just for you: This matches the {item_mood} vibe! {context_msg}"
+
+# def translate_text(text, target_language):
+#     if target_language == 'en' or not text:
+#         return text
+    
+#     try:
+#         lang_map = {
+#             'es': 'Spanish', 'pt': 'Portuguese', 'fr': 'French', 'de': 'German', 
+#             'it': 'Italian', 'ru': 'Russian', 'ar': 'Arabic', 'he': 'Hebrew', 
+#             'hi': 'Hindi', 'te': 'Telugu', 'ta': 'Tamil', 'ko': 'Korean', 
+#             'ja': 'Japanese', 'zh': 'Chinese'
+#         }
+#         lang_name = lang_map.get(target_language, 'English')
+        
+#         response = openai.chat.completions.create(
+#             model="gpt-4o-mini",
+#             messages=[
+#                 {"role": "system", "content": f"Translate the following text to {lang_name}. Maintain original tone. Only return the translation."},
+#                 {"role": "user", "content": text}
+#             ],
+#             temperature=0.3,
+#             timeout=5
+#         )
+#         translated = response.choices[0].message.content.strip()
+#         return translated if translated else text
+#     except Exception as e:
+#         logger.error(f"Translation error: {e}")
+#         return text
+
+# def generate_closing_message(user_query, user_language='en'):
+#     try:
+#         # Simplified language instruction
+#         lang_instruction_map = {
+#             'te': "Respond in Telugu using Telugu script.", 'he': "Respond in Hebrew using Hebrew script.",
+#             'ar': "Respond in Arabic using Arabic script.", 'hi': "Respond in Hindi using Devanagari script.",
+#             'es': "Respond in Spanish.", 'pt': "Respond in Portuguese.", 'fr': "Respond in French."
+#         }
+#         lang_instruction = lang_instruction_map.get(user_language, "Respond in English.")
+        
+#         prompt = (
+#             f"User query: '{user_query}'. I sent recommendations. "
+#             f"Write a SHORT closing message asking if they want more suggestions. "
+#             f"Use 1 emoji. Be friendly. {lang_instruction}"
+#         )
+        
+#         response = openai.chat.completions.create(
+#             model="gpt-4o-mini",
+#             messages=[{"role": "system", "content": "You are Yara, a friendly Buenos Aires guide.you know evetu thing"}, {"role": "user", "content": prompt}],
+#             temperature=0.7,
+#             timeout=4
+#         )
+#         return response.choices[0].message.content.replace('"', '')
+#     except:
+#         # Fallback messages
+#         fallback_map = {
+#             'te': "మరిన్ని సూచనలు కావాలా? 🎉", 'he': "צריך עוד המלצות? 🎉",
+#             'ar': "هل تحتاج المزيد من الاقتراحات؟ 🎉", 'es': "¿Te gustaría más sugerencias? 🎉",
+#             'pt': "Gostaria de mais sugestões? 🎉"
+#         }
+#         return fallback_map.get(user_language, "Need more suggestions? 🎉")
+
+# # --- DATABASE FUNCTIONS (UNCHANGED) ---
+
+# def get_user(conn, phone):
+#     with conn.cursor() as cur:
+#         cur.execute("SELECT * FROM public.users WHERE phone = %s", (phone,))
+#         return cur.fetchone()
+
+# def create_user(conn, phone):
+#     with conn.cursor() as cur:
+#         cur.execute(
+#             "INSERT INTO public.users (phone, conversation_step) VALUES (%s, 'welcome') ON CONFLICT (phone) DO NOTHING", (phone,)
+#         )
+#         conn.commit()
+#         cur.execute("SELECT * FROM public.users WHERE phone = %s", (phone,))
+#         return cur.fetchone()
+
+# def update_user(conn, phone, data):
+#     set_clause = ", ".join([f"{key} = %s" for key in data.keys()])
+#     values = list(data.values())
+#     values.append(phone)
+#     with conn.cursor() as cur:
+#         cur.execute(f"UPDATE public.users SET {set_clause} WHERE phone = %s", values)
+#         conn.commit()
+
+# # --- ENHANCED SEARCH LOGIC ---
+
+# def build_search_query(table, ai_data, strictness_level):
+#     """
+#     UPDATED: Now includes 'inferred_keywords' for intelligent searching.
+#     """
+#     query = f"SELECT * FROM public.{table} WHERE 1=1"
+#     args = []
+    
+#     date_range = ai_data.get('date_range') or {}
+#     social_context = ai_data.get('social_context')
+    
+#     # 1. Build search terms from ALL context
+#     search_terms = []
+    
+#     # Add direct keywords
+#     if ai_data.get('specific_keywords'):
+#         search_terms.extend(ai_data.get('specific_keywords'))
+
+#     # --- THIS IS THE NEW, INTELLIGENT PART ---
+#     # Add inferred keywords from abstract requests
+#     if ai_data.get('inferred_keywords'):
+#         search_terms.extend(ai_data.get('inferred_keywords'))
+    
+#     # Add mood
+#     if ai_data.get('target_mood'):
+#         search_terms.append(ai_data.get('target_mood'))
+    
+#     # Add social context keywords
+#     if social_context == 'date':
+#         search_terms.extend(['romantic', 'intimate', 'cozy'])
+#     elif social_context == 'friends':
+#         search_terms.extend(['social', 'group', 'casual'])
+    
+#     # Add category if specific
+#     cat = ai_data.get('category', '')
+#     if cat and len(cat) > 3 and cat.lower() not in ['event', 'party', 'show', 'place', 'spot']:
+#         search_terms.append(cat)
+    
+#     # Clean and deduplicate
+#     search_terms = list(set([t for t in search_terms if t and len(t) > 2]))
+    
+#     logger.info(f"🔍 Search Terms (Level {strictness_level}): {search_terms}")
+
+#     # --- DATE LOGIC (for events) ---
+#     if table == 'events' and date_range:
+#         start, end = date_range.get('start'), date_range.get('end')
+#         if start and end:
+#             start_obj = datetime.strptime(start, "%Y-%m-%d").date()
+#             end_obj = datetime.strptime(end, "%Y-%m-%d").date()
+#             days_in_range = [ (start_obj + timedelta(days=i)).strftime('%A') for i in range((end_obj - start_obj).days + 1) ]
+#             days_tuple = tuple(set(days_in_range))
+#             query += " AND ((event_date >= %s::date AND event_date <= %s::date) OR (recurring_day = ANY(%s)))"
+#             args.extend([start, end, list(days_tuple)])
+
+#     # --- TEXT SEARCH LOGIC ---
+#     if search_terms:
+#         term_conditions = [f"(title ILIKE %s OR description ILIKE %s OR mood ILIKE %s OR music_type ILIKE %s OR location ILIKE %s)" for _ in search_terms] if table == 'events' else [f"(name ILIKE %s OR description ILIKE %s OR location ILIKE %s OR type ILIKE %s)" for _ in search_terms]
+        
+#         for term in search_terms:
+#             term_wild = f"%{term}%"
+#             args.extend([term_wild] * (5 if table == 'events' else 4))
+        
+#         join_operator = " AND " if strictness_level == 1 else " OR "
+#         query += f" AND ({join_operator.join(term_conditions)})"
+
+#     # Order and limit
+#     query += " ORDER BY event_date ASC LIMIT 5" if table == 'events' else " LIMIT 5"
+
+#     logger.info(f"📊 SQL Query: {query[:200]}...")
+#     logger.info(f"📊 Args: {args}")
+    
+#     return query, args
+
+
+# # (The other functions like smart_search, Twilio utils, fallbacks, and the main process are UNCHANGED)
+# def smart_search(conn, table, ai_data):
+#     """
+#     Tries strict search first, then loose search
+#     """
+#     # Attempt 1: Strict (ALL keywords)
+#     query, args = build_search_query(table, ai_data, strictness_level=1)
+#     with conn.cursor() as cur:
+#         cur.execute(query, tuple(args))
+#         results = cur.fetchall()
+#         if results:
+#             logger.info(f"✅ Found {len(results)} results (Strict)")
+#             return results
+
+#     # Attempt 2: Loose (ANY keyword)
+#     query, args = build_search_query(table, ai_data, strictness_level=2)
+#     with conn.cursor() as cur:
+#         cur.execute(query, tuple(args))
+#         results = cur.fetchall()
+#         if results:
+#             logger.info(f"✅ Found {len(results)} results (Loose)")
+#         else:
+#             logger.warning(f"⚠️ No results in {table}")
+#         return results if results else []
+
+# def send_whatsapp_message(to, body, media_url=None):
+#     if not TWILIO_WHATSAPP_NUMBER: 
+#         return
+    
+#     try:
+#         message_data = {
+#             'from_': TWILIO_WHATSAPP_NUMBER,
+#             'to': to,
+#             'body': body
+#         }
+#         if media_url:
+#             message_data['media_url'] = media_url
+            
+#         twilio_client.messages.create(**message_data)
+#     except Exception as e:
+#         logger.error(f"❌ Twilio Error: {e}")
+
+# def ask_chatgpt_expert_fallback(user_input, ai_data, user_language='en'):
+#     category = ai_data.get('category')
+#     mood = ai_data.get('target_mood')
+#     social_context = ai_data.get('social_context')
+#     keywords = ai_data.get('specific_keywords', [])
+#     date_range = ai_data.get('date_range') or {}
+#     date_str = date_range.get('start')
+    
+#     context_parts = []
+#     if social_context: context_parts.append(f"The user is looking for a spot for a {social_context}")
+#     if mood: context_parts.append(f"They want a {mood} vibe")
+#     if keywords: context_parts.append(f"They're interested in: {', '.join(keywords)}")
+#     if category: context_parts.append(f"Looking for: {category}")
+#     if date_str: context_parts.append(f"For the date: {date_str}")
+    
+#     context_description = ". ".join(context_parts) if context_parts else "They're looking for recommendations"
+    
+#     lang_map = {
+#         'te': "CRITICAL: Respond ENTIRELY in Telugu using Telugu script (తెలుగు).",
+#         'he': "CRITICAL: Respond ENTIRELY in Hebrew using Hebrew script (עברית).",
+#         'ar': "CRITICAL: Respond ENTIRELY in Arabic using Arabic script (العربية).",
+#         'hi': "CRITICAL: Respond ENTIRELY in Hindi using Devanagari script (हिन्दी).",
+#         'es': "IMPORTANT: Respond in Spanish.",
+#         'pt': "IMPORTANT: Respond in Portuguese.",
+#         'fr': "IMPORTANT: Respond in French.",
+#     }
+#     lang_instruction = lang_map.get(user_language, "IMPORTANT: Respond in English.")
+    
+#     expert_prompt = f"""You are Yara, a LOCAL Buenos Aires expert. 
+# CONTEXT: {context_description}
+# Your database has no matches, but you should:
+# 1. Give 2-3 SPECIFIC place names in Buenos Aires that match the request.
+# 2. Include the neighborhood (Palermo, San Telmo, etc.).
+# 3. Briefly explain WHY each place is perfect.
+# 4. Be conversational and use relevant emojis.
+# Format:
+# "[Intro sentence]
+# 🎯 [Place Name 1] in [Neighborhood]
+# [Why it's perfect]
+# 🎯 [Place Name 2] in [Neighborhood]  
+# [Why it's perfect]
+# [Friendly closing]"
+# ORIGINAL REQUEST: "{user_input}"
+# {lang_instruction}"""
+
+#     try:
+#         response = openai.chat.completions.create(
+#             model="gpt-4o-mini",
+#             messages=[{"role": "system", "content": "You are Yara, an expert Buenos Aires local guide.you know every thing"}, {"role": "user", "content": expert_prompt}],
+#             temperature=0.8,
+#             timeout=10
+#         )
+#         expert_response = response.choices[0].message.content
+#         logger.info(f"🎯 Expert Fallback Response Generated in {user_language}")
+#         return expert_response
+#     except Exception as e:
+#         logger.error(f"Fallback Error: {e}")
+#         fallback_map = {
+#             'te': "క్షమించండి, నా డేటాబేస్‌లో నిర్దిష్ట ఎంపికలు కనిపించలేదు, కానీ బ్యూనస్ ఎయిర్స్‌లో చాలా గొప్ప ప్రదేశాలు ఉన్నాయి! మీరు మరిన్ని వివరాలు ఇవ్వగలరా?",
+#             'he': "מצטער, לא מצאתי אפשרויות ספציפיות במסד הנתונים שלי, אבל יש המון מקומות נהדרים בבואנוס איירס! תוכל לתת לי עוד פרטים?",
+#             'ar': "آسف، لم أجد خيارات محددة. هل يمكنك إعطائي المزيد من التفاصيل؟",
+#             'es': "Hmm, no encontré opciones específicas. ¿Puedes darme más detalles?",
+#         }
+#         return fallback_map.get(user_language, "I couldn't find specific matches. Can you give me more details?")
+
+# def process_message_thread(sender, text):
+#     conn = None
+#     try:
+#         conn = postgreSQL_pool.getconn()
+#         user = get_user(conn, sender)
+
+#         if not user:
+#             create_user(conn, sender)
+#             send_whatsapp_message(sender, "Hey! Welcome to Yara ai , I’m your Buenos Aires guide for finding the best plans in the city ✨ what are you in the mood for?")
+#             return
+
+#         step, user_age = user.get('conversation_step'), user.get('age', '25')
+        
+#         ai_data = executor.submit(analyze_user_intent, text).result() or {"user_language": "en"}
+#         user_language = ai_data.get('user_language', 'en')
+#         social_context = ai_data.get('social_context')
+
+#         logger.info(f"🌍 Detected Language: {user_language}")
+
+#         if ai_data.get('is_greeting') and step != 'ask_name_age':
+#             user_name = user.get('name', 'there')
+#             greetings = {'te': f"నమస్కారం {user_name}! మీరు ఏమి వెతుకుతున్నారు?", 'he': f"שלום {user_name}! מה אתה מחפש?", 'ar': f"مرحباً {user_name}! ماذا تبحث؟", 'es': f"¡Hola {user_name}! ¿Qué estás buscando hoy?", 'en': f"Hey {user_name}! What are you looking for today?"}
+#             send_whatsapp_message(sender, greetings.get(user_language, greetings['en']))
+#             return
+
+#         if step == 'welcome':
+#             messages = {'te': "మొదట, మీకు ఉత్తమ సూచనలు ఇవ్వడానికి, మీ పేరు మరియు వయస్సు ఏమిటి?", 'he': "קודם כל, מה שמך וגילך?", 'ar': "أولاً، ما هو اسمك وعمرك؟", 'es': "Primero, ¿cuál es tu nombre y edad?", 'en': "First, what's your name and age?"}
+#             send_whatsapp_message(sender, messages.get(user_language, messages['en']))
+#             update_user(conn, sender, {"conversation_step": "ask_name_age", "last_mood": text})
+#             return
+
+#         if step == 'ask_name_age':
+#             last_mood = user.get('last_mood')
+#             messages = {'te': f"సరే! '{last_mood}' కోసం చూపిస్తున్నాను:", 'he': f"מעולה! מראה אפשרויות עבור '{last_mood}':", 'ar': f"رائع! عرض الخيارات لـ '{last_mood}':", 'es': f"¡Perfecto! Buscando opciones para '{last_mood}':", 'en': f"Ok cool! Showing options for '{last_mood}':"}
+#             send_whatsapp_message(sender, messages.get(user_language, messages['en']))
+            
+#             clean_name = re.sub(r'[^\w]', '', text.split()[0]) if text.split() else "Friend"
+#             age = "".join(filter(str.isdigit, text)) or "25"
+            
+#             update_user(conn, sender, {"name": clean_name, "age": age, "conversation_step": "ready"})
+#             text = last_mood 
+#             ai_data = analyze_user_intent(text) or {"user_language": "en"}
+#             user_language = ai_data.get('user_language', 'en')
+#             social_context = ai_data.get('social_context')
+
+#         found_something = False
+#         should_check_events = ai_data.get('date_range') or any(k in ai_data.get('category', '') for k in ['event', 'concert', 'show', 'party']) or ai_data.get('inferred_keywords')
+
+#         if should_check_events:
+#             events = smart_search(conn, 'events', ai_data)
+#             if events:
+#                 found_something = True
+#                 intro = translate_text(f"Here are some events matching your vibe:", user_language)
+#                 if ai_data.get('date_range') and ai_data['date_range'].get('start'):
+#                     intro = translate_text(f"Here's what's happening around {ai_data['date_range']['start']}:", user_language)
+#                 send_whatsapp_message(sender, intro)
+                
+#                 for e in events:
+#                     futures = {
+#                         'jfy': executor.submit(generate_just_for_you, user_age, e['title'], e['description'], e.get('mood', 'social'), social_context, user_language),
+#                         'title': executor.submit(translate_text, e.get('title'), user_language),
+#                         'desc': executor.submit(translate_text, e.get('description'), user_language)
+#                     }
+#                     display_date = e.get('event_date') if e.get('event_date') else f"Every {e.get('recurring_day')}"
+#                     caption = f"*{futures['title'].result()}*\n\n📍 {translate_text(e.get('location'), user_language)}\n🕒 {e.get('event_time')}\n📅 {display_date}\n🎵 {translate_text(e.get('music_type'), user_language)}\n📝 {futures['desc'].result()}\n📸 {e.get('instagram_link')}\n\n{futures['jfy'].result()}"
+#                     send_whatsapp_message(sender, caption, media_url=e.get('image_url'))
+        
+#         should_check_businesses = not found_something or any(k in ai_data.get('category', '') for k in ['bar', 'restaurant', 'cafe', 'club']) or social_context
+#         if should_check_businesses:
+#             businesses = smart_search(conn, 'businesses', ai_data)
+#             if businesses:
+#                 found_something = True
+#                 intro = translate_text("Found these spots for you:", user_language)
+#                 send_whatsapp_message(sender, intro)
+#                 for b in businesses:
+#                     futures = {
+#                         'jfy': executor.submit(generate_just_for_you, user_age, b['name'], b['description'], ai_data.get('target_mood') or 'chill', social_context, user_language),
+#                         'name': executor.submit(translate_text, b.get('name'), user_language),
+#                         'desc': executor.submit(translate_text, b.get('description'), user_language)
+#                     }
+#                     msg = f"*{futures['name'].result()}*\n📍 {translate_text(b.get('location'), user_language)}\n\n{futures['desc'].result()}\n\n📸 {b.get('instagram_link')}\n\n{futures['jfy'].result()}"
+#                     send_whatsapp_message(sender, msg, media_url=b.get('image_url'))
+
+#         if found_something:
+#             send_whatsapp_message(sender, generate_closing_message(text, user_language))
+#         else:
+#             logger.info(f"🎯 No database matches - Using Expert Fallback in {user_language}")
+#             send_whatsapp_message(sender, ask_chatgpt_expert_fallback(text, ai_data, user_language))
+
+#     except Exception as e:
+#         logger.error(f"Logic Error: {e}", exc_info=True)
+#         send_whatsapp_message(sender, "Sorry, something went wrong. Let me try again - what are you looking for?")
+#     finally:
+#         if conn: postgreSQL_pool.putconn(conn)
+
+# # ==============================================================================
+# # 🌐 WEBHOOK
+# # ==============================================================================
+
+# @app.route("/webhook", methods=["POST"])
+# def twilio_webhook():
+#     incoming_msg = request.form.get('Body')
+#     sender_id = request.form.get('From') 
+#     if not sender_id or not incoming_msg: return "" 
+    
+#     resp = MessagingResponse()
+#     threading.Thread(target=process_message_thread, args=(sender_id, incoming_msg)).start()
+#     return str(resp)
+
+# if __name__ == "__main__":
+#     print("🚀 Twilio WhatsApp Bot Starting...")
+#     print("✨ Enhanced Features:")
+#     print("   - Fully Multi-language (English DEFAULT)")
+#     print("   - Intelligent Abstract Search (e.g., 'artistic events')")
+#     print("   - Auto-translation of all content")
+#     print("   - Images with all recommendations")
+#     app.run(port=5000)
+
 import os
 import logging
 import psycopg2
@@ -2657,7 +3234,6 @@ def analyze_user_intent(user_text):
         logger.error(f"AI Intent Error: {e}")
         return {"user_language": "en"}
 
-# (The other functions like generate_just_for_you, translate_text, etc., are UNCHANGED)
 def generate_just_for_you(user_age, item_name, item_desc, item_mood, social_context=None, user_language='en'):
     """
     Enhanced: Now generates personalized recommendations in user's detected language
@@ -2766,7 +3342,7 @@ def generate_closing_message(user_query, user_language='en'):
         
         response = openai.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "You are Yara, a friendly Buenos Aires guide.you know evetu thing"}, {"role": "user", "content": prompt}],
+            messages=[{"role": "system", "content": "You are Yara, a friendly Buenos Aires guide. You know everything."}, {"role": "user", "content": prompt}],
             temperature=0.7,
             timeout=4
         )
@@ -2879,30 +3455,39 @@ def build_search_query(table, ai_data, strictness_level):
     return query, args
 
 
-# (The other functions like smart_search, Twilio utils, fallbacks, and the main process are UNCHANGED)
+# ============================================================================== 
+# CHANGE 1: FIXED smart_search() - Now has error handling, returns [] on crash
+# ==============================================================================
 def smart_search(conn, table, ai_data):
     """
-    Tries strict search first, then loose search
+    UPDATED: Added try-catch to prevent crashes. Returns empty list on error.
     """
-    # Attempt 1: Strict (ALL keywords)
-    query, args = build_search_query(table, ai_data, strictness_level=1)
-    with conn.cursor() as cur:
-        cur.execute(query, tuple(args))
-        results = cur.fetchall()
-        if results:
-            logger.info(f"✅ Found {len(results)} results (Strict)")
-            return results
+    try:
+        # Attempt 1: Strict (ALL keywords)
+        query, args = build_search_query(table, ai_data, strictness_level=1)
+        with conn.cursor() as cur:
+            cur.execute(query, tuple(args))
+            results = cur.fetchall()
+            if results:
+                logger.info(f"✅ Found {len(results)} results (Strict)")
+                return results
 
-    # Attempt 2: Loose (ANY keyword)
-    query, args = build_search_query(table, ai_data, strictness_level=2)
-    with conn.cursor() as cur:
-        cur.execute(query, tuple(args))
-        results = cur.fetchall()
-        if results:
-            logger.info(f"✅ Found {len(results)} results (Loose)")
-        else:
-            logger.warning(f"⚠️ No results in {table}")
-        return results if results else []
+        # Attempt 2: Loose (ANY keyword)
+        query, args = build_search_query(table, ai_data, strictness_level=2)
+        with conn.cursor() as cur:
+            cur.execute(query, tuple(args))
+            results = cur.fetchall()
+            if results:
+                logger.info(f"✅ Found {len(results)} results (Loose)")
+                return results
+            else:
+                logger.warning(f"⚠️ No results in {table}")
+                return []
+    
+    except Exception as e:
+        # ADDED: Instead of crashing, log error and return empty list
+        logger.error(f"❌ Search error in {table}: {e}")
+        return []  # Returns empty so fallback can handle it
 
 def send_whatsapp_message(to, body, media_url=None):
     if not TWILIO_WHATSAPP_NUMBER: 
@@ -2921,23 +3506,39 @@ def send_whatsapp_message(to, body, media_url=None):
     except Exception as e:
         logger.error(f"❌ Twilio Error: {e}")
 
+# ==============================================================================
+# CHANGE 2: UPDATED ask_chatgpt_expert_fallback() - ALWAYS POSITIVE PROMPT
+# ==============================================================================
 def ask_chatgpt_expert_fallback(user_input, ai_data, user_language='en'):
+    """
+    UPDATED: Prompt rewritten to be ALWAYS POSITIVE. Never says "not found" or "sorry"
+    """
     category = ai_data.get('category')
     mood = ai_data.get('target_mood')
     social_context = ai_data.get('social_context')
     keywords = ai_data.get('specific_keywords', [])
+    inferred_keywords = ai_data.get('inferred_keywords', [])
     date_range = ai_data.get('date_range') or {}
     date_str = date_range.get('start')
     
+    # Build context description
     context_parts = []
-    if social_context: context_parts.append(f"The user is looking for a spot for a {social_context}")
-    if mood: context_parts.append(f"They want a {mood} vibe")
-    if keywords: context_parts.append(f"They're interested in: {', '.join(keywords)}")
-    if category: context_parts.append(f"Looking for: {category}")
-    if date_str: context_parts.append(f"For the date: {date_str}")
+    if social_context: 
+        context_parts.append(f"looking for {social_context} experience")
+    if mood: 
+        context_parts.append(f"wants {mood} vibe")
+    if keywords: 
+        context_parts.append(f"interested in: {', '.join(keywords)}")
+    if inferred_keywords:
+        context_parts.append(f"likes: {', '.join(inferred_keywords)}")
+    if category: 
+        context_parts.append(f"wants: {category}")
+    if date_str: 
+        context_parts.append(f"for date: {date_str}")
     
-    context_description = ". ".join(context_parts) if context_parts else "They're looking for recommendations"
+    context_description = ". ".join(context_parts) if context_parts else "looking for recommendations in Buenos Aires"
     
+    # Language instruction
     lang_map = {
         'te': "CRITICAL: Respond ENTIRELY in Telugu using Telugu script (తెలుగు).",
         'he': "CRITICAL: Respond ENTIRELY in Hebrew using Hebrew script (עברית).",
@@ -2949,42 +3550,87 @@ def ask_chatgpt_expert_fallback(user_input, ai_data, user_language='en'):
     }
     lang_instruction = lang_map.get(user_language, "IMPORTANT: Respond in English.")
     
-    expert_prompt = f"""You are Yara, a LOCAL Buenos Aires expert. 
-CONTEXT: {context_description}
-Your database has no matches, but you should:
-1. Give 2-3 SPECIFIC place names in Buenos Aires that match the request.
-2. Include the neighborhood (Palermo, San Telmo, etc.).
-3. Briefly explain WHY each place is perfect.
-4. Be conversational and use relevant emojis.
-Format:
-"[Intro sentence]
-🎯 [Place Name 1] in [Neighborhood]
-[Why it's perfect]
-🎯 [Place Name 2] in [Neighborhood]  
-[Why it's perfect]
-[Friendly closing]"
-ORIGINAL REQUEST: "{user_input}"
-{lang_instruction}"""
+    # === UPDATED PROMPT - ALWAYS POSITIVE ===
+    expert_prompt = f"""You are Yara, the ULTIMATE Buenos Aires expert and local tour guide. 
+You know EVERYTHING about Buenos Aires - every bar, every restaurant, every café, every hidden gem, every event, every neighborhood.
+
+USER'S REQUEST: "{user_input}"
+USER CONTEXT: {context_description}
+
+YOUR MISSION: Give them 2-3 PERFECT, SPECIFIC recommendations that match their request.
+
+CRITICAL RULES - READ CAREFULLY:
+1. ✅ BE POSITIVE AND CONFIDENT - You're an expert who knows the BEST places in Buenos Aires
+2. ✅ Give 2-3 SPECIFIC place names with neighborhoods (Palermo, San Telmo, Recoleta, etc.)
+3. ✅ Explain WHY each place is perfect for their request
+4. ✅ Be enthusiastic and use emojis (🎯, ✨, 🍸, 🎵, etc.)
+5. ❌ NEVER EVER say negative things like:
+   - "sorry"
+   - "not found"
+   - "don't have"
+   - "couldn't find"
+   - "no matches"
+   - "unfortunately"
+6. ✅ Instead, say positive things like:
+   - "I know the perfect spots!"
+   - "Great choice! Here are amazing places!"
+   - "You'll love these!"
+   - "Perfect! Buenos Aires has incredible options!"
+
+FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+"[Enthusiastic intro acknowledging their request - NO negativity!]
+
+🎯 **[Place Name]** in [Neighborhood]
+[One sentence why it's perfect for them]
+
+🎯 **[Place Name]** in [Neighborhood]
+[One sentence why it's perfect for them]
+
+🎯 **[Place Name]** in [Neighborhood]
+[One sentence why it's perfect for them]
+
+[Friendly closing with emoji]"
+
+EXAMPLES OF GOOD INTROS (use similar tone):
+- "Great choice! I know some incredible spots for that!" ✅
+- "Perfect! Buenos Aires has amazing places for this!" ✅
+- "Excellent! Here are some fantastic options!" ✅
+- "I love that you're asking! Buenos Aires has the best spots for this!" ✅
+
+EXAMPLES OF BAD INTROS (NEVER use these):
+- "Sorry, I don't have information..." ❌
+- "Unfortunately, I couldn't find..." ❌
+- "My database doesn't have..." ❌
+
+{lang_instruction}
+
+Remember: You're a confident expert. You ALWAYS have great recommendations!"""
 
     try:
         response = openai.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": "You are Yara, an expert Buenos Aires local guide.you know every thing"}, {"role": "user", "content": expert_prompt}],
+            messages=[
+                {"role": "system", "content": "You are Yara, the ultimate Buenos Aires expert who knows EVERYTHING about the city. You're always positive, enthusiastic, and helpful. You NEVER say negative things. You always have great recommendations because you're a real expert."}, 
+                {"role": "user", "content": expert_prompt}
+            ],
             temperature=0.8,
             timeout=10
         )
         expert_response = response.choices[0].message.content
         logger.info(f"🎯 Expert Fallback Response Generated in {user_language}")
         return expert_response
+    
     except Exception as e:
         logger.error(f"Fallback Error: {e}")
+        # UPDATED: Even error fallback is positive
         fallback_map = {
-            'te': "క్షమించండి, నా డేటాబేస్‌లో నిర్దిష్ట ఎంపికలు కనిపించలేదు, కానీ బ్యూనస్ ఎయిర్స్‌లో చాలా గొప్ప ప్రదేశాలు ఉన్నాయి! మీరు మరిన్ని వివరాలు ఇవ్వగలరా?",
-            'he': "מצטער, לא מצאתי אפשרויות ספציפיות במסד הנתונים שלי, אבל יש המון מקומות נהדרים בבואנוס איירס! תוכל לתת לי עוד פרטים?",
-            'ar': "آسف، لم أجد خيارات محددة. هل يمكنك إعطائي المزيد من التفاصيل؟",
-            'es': "Hmm, no encontré opciones específicas. ¿Puedes darme más detalles?",
+            'te': "బ్యూనస్ ఎయిర్స్‌లో మీ కోసం కొన్ని అద్భుతమైన ప్రదేశాలు ఉన్నాయి! మరిన్ని వివరాలు ఇవ్వండి, నేను ఉత్తమ ప్రదేశాలను సూచిస్తాను! 🎯",
+            'he': "יש כמה מקומות מדהימים בבואנוס איירס בשבילך! ספר לי עוד פרטים ואני אמליץ על המקומות הכי טובים! 🎯",
+            'ar': "لدي أماكن رائعة في بوينس آيريس لك! أخبرني المزيد من التفاصيل وسأوصي بأفضل الأماكن! 🎯",
+            'es': "¡Conozco lugares increíbles en Buenos Aires para ti! Cuéntame más detalles y te recomendaré los mejores sitios! 🎯",
+            'pt': "Conheço lugares incríveis em Buenos Aires para você! Me conte mais detalhes e recomendarei os melhores lugares! 🎯",
         }
-        return fallback_map.get(user_language, "I couldn't find specific matches. Can you give me more details?")
+        return fallback_map.get(user_language, "I know some amazing places in Buenos Aires for you! Tell me more details and I'll recommend the best spots! 🎯")
 
 def process_message_thread(sender, text):
     conn = None
@@ -2994,7 +3640,7 @@ def process_message_thread(sender, text):
 
         if not user:
             create_user(conn, sender)
-            send_whatsapp_message(sender, "Hey! Welcome to Yara ai , I’m your Buenos Aires guide for finding the best plans in the city ✨ what are you in the mood for?")
+            send_whatsapp_message(sender, "Hey! Welcome to Yara ai , I'm your Buenos Aires guide for finding the best plans in the city ✨ what are you in the mood for?")
             return
 
         step, user_age = user.get('conversation_step'), user.get('age', '25')
@@ -3035,7 +3681,7 @@ def process_message_thread(sender, text):
         should_check_events = ai_data.get('date_range') or any(k in ai_data.get('category', '') for k in ['event', 'concert', 'show', 'party']) or ai_data.get('inferred_keywords')
 
         if should_check_events:
-            events = smart_search(conn, 'events', ai_data)
+            events = smart_search(conn, 'events', ai_data)  # Now returns [] on error
             if events:
                 found_something = True
                 intro = translate_text(f"Here are some events matching your vibe:", user_language)
@@ -3055,7 +3701,7 @@ def process_message_thread(sender, text):
         
         should_check_businesses = not found_something or any(k in ai_data.get('category', '') for k in ['bar', 'restaurant', 'cafe', 'club']) or social_context
         if should_check_businesses:
-            businesses = smart_search(conn, 'businesses', ai_data)
+            businesses = smart_search(conn, 'businesses', ai_data)  # Now returns [] on error
             if businesses:
                 found_something = True
                 intro = translate_text("Found these spots for you:", user_language)
@@ -3072,14 +3718,26 @@ def process_message_thread(sender, text):
         if found_something:
             send_whatsapp_message(sender, generate_closing_message(text, user_language))
         else:
-            logger.info(f"🎯 No database matches - Using Expert Fallback in {user_language}")
+            # If nothing found in database, use positive expert fallback
+            logger.info(f"🎯 No database matches - Using Positive Expert Fallback in {user_language}")
             send_whatsapp_message(sender, ask_chatgpt_expert_fallback(text, ai_data, user_language))
 
+# ==============================================================================
+# CHANGE 3: UPDATED Exception Handler - Uses fallback instead of error message
+# ==============================================================================
     except Exception as e:
         logger.error(f"Logic Error: {e}", exc_info=True)
-        send_whatsapp_message(sender, "Sorry, something went wrong. Let me try again - what are you looking for?")
+        # UPDATED: Instead of showing error message, use positive fallback
+        try:
+            ai_data = analyze_user_intent(text) or {"user_language": "en"}
+            user_language = ai_data.get('user_language', 'en')
+            send_whatsapp_message(sender, ask_chatgpt_expert_fallback(text, ai_data, user_language))
+        except:
+            # Last resort - still positive
+            send_whatsapp_message(sender, "I know some amazing places in Buenos Aires! Tell me what you're looking for and I'll recommend the best spots! 🎯")
     finally:
-        if conn: postgreSQL_pool.putconn(conn)
+        if conn: 
+            postgreSQL_pool.putconn(conn)
 
 # ==============================================================================
 # 🌐 WEBHOOK
@@ -3102,5 +3760,6 @@ if __name__ == "__main__":
     print("   - Intelligent Abstract Search (e.g., 'artistic events')")
     print("   - Auto-translation of all content")
     print("   - Images with all recommendations")
+    print("   - ALWAYS POSITIVE responses - never shows errors")
+    print("   - Expert fallback for empty database results")
     app.run(port=5000)
-
